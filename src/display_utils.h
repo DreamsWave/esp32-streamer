@@ -8,10 +8,8 @@ extern Adafruit_SSD1306 display;
 
 void drawRetroProgressBar(int x, int y, int width, int height, int progress);
 void drawProgressBar(int x, int y, int width, int height, int progress);
+void drawChargeBar(int x, int y, int progress);
 void drawWifiIcon(int x, int y);
-void drawAnimatedBean(int x, int y);
-void resetAnimatedCat();
-void drawAnimatedCat();
 bool animatedCatFinished();
 String getLocalTimeStr();
 

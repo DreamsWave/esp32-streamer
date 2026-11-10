@@ -7,9 +7,12 @@
 
 #include "config.h"
 #include "display_utils.h"
-#include "bitmaps/main_scene.h"
+
+#include "bitmaps/bottom_main.h"
 #include "bitmaps/glorp.h"
-#include "bitmaps/bean.h"
+#include "bitmaps/top_status.h"
+#include "bitmaps/window_glorp_signal.h"
+#include "bitmaps/window_moon.h"
 
 WebServer server(80);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -23,8 +26,10 @@ int closingCircleRadius = 0;
 String streamerName = "STREAMER";
 String streamerTitle = "Cool title";
 
+#ifdef WOKWI_SIMULATOR
 unsigned long testTimer = 0;
 bool testTriggered = false;
+#endif
 unsigned long lastScrollMillis = 0;
 unsigned long scrollDelayTimer = 0;
 int scrollPos = 0;
@@ -50,7 +55,6 @@ void handleWebhook()
   scrollPos = 0;
   scrollDelayTimer = 0;
   closingCircleRadius = 0;
-  resetAnimatedCat();
   state = 1;
 
   display.ssd1306_command(SSD1306_DISPLAYON);
@@ -108,7 +112,7 @@ void loop()
 {
   server.handleClient();
 
-  // Wokwi auto-simulation block
+#ifdef WOKWI_SIMULATOR
   if (!testTriggered)
   {
     if (testTimer == 0)
@@ -128,7 +132,6 @@ void loop()
       currentScene = 0;
       scrollPos = 0;
       scrollDelayTimer = 0;
-      resetAnimatedCat();
       state = 1;
 
       display.ssd1306_command(SSD1306_DISPLAYON);
@@ -136,6 +139,7 @@ void loop()
       Serial.println(streamerName);
     }
   }
+#endif
 
   if (state == 0)
   {
@@ -148,13 +152,12 @@ void loop()
   // Scene 0: glorpOS Loading Screen
   if (currentScene == 0)
   {
-    display.drawBitmap(49, 5, glorp_bitmap, 30, 32, WHITE);
-    drawRetroProgressBar(27, 36, 74, 9, loadingSceneProgress);
-    drawAnimatedCat();
+    display.drawBitmap(49, 19, glorp_bitmap, 30, 32, WHITE);
+    drawRetroProgressBar(27, 50, 74, 9, loadingSceneProgress);
 
     display.setTextSize(1);
     display.setTextColor(WHITE);
-    display.setCursor(42, 49);
+    display.setCursor(42, 5);
     display.print(F("glorpOS"));
 
     loadingSceneProgress += 4;
@@ -171,15 +174,15 @@ void loop()
   // Scene 1: Stream Dashboard Display
   else if (currentScene == 1)
   {
-    display.drawBitmap(0, 0, main_scene_gui_bitmap, 128, 64, WHITE);
-    drawProgressBar(2, 28, 120, 1, mainSceneProgress);
-    drawAnimatedBean(1, 57);
-    drawAnimatedCat();
+    display.drawBitmap(0, 16, bottom_main_bitmap, 128, 48, WHITE);
+    display.drawBitmap(90, 0, top_status_bitmap, 38, 16, WHITE);
+    display.drawBitmap(8, 21, window_moon_bitmap, 41, 41, WHITE);
+    display.drawBitmap(78, 32, window_glorp_signal_bitmap, 48, 30, WHITE);
 
     if (mainSceneProgress < 100)
       mainSceneProgress++;
 
-    if (mainSceneProgress >= 100 && animatedCatFinished())
+    if (mainSceneProgress >= 100)
     {
       mainSceneProgress = 100;
       closingCircleRadius = 0;
@@ -187,16 +190,17 @@ void loop()
       return;
     }
 
-    display.setTextSize(0);
-    display.setTextColor(BLACK);
-    display.setCursor(15, 5);
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(0, 0);
     display.print(streamerName);
+    drawChargeBar(102, 2, mainSceneProgress);
 
     if (scrollDelayTimer == 0)
       scrollDelayTimer = millis();
 
     String displayText = streamerTitle;
-    int maxVisibleChars = 19;
+    int maxVisibleChars = 15;
 
     if (displayText.length() > maxVisibleChars)
     {
@@ -225,53 +229,54 @@ void loop()
       }
     }
 
-    display.setCursor(6, 19);
+    display.setCursor(0, 8);
     display.setTextColor(WHITE);
     display.print(displayText);
 
     display.setTextSize(1);
     display.setTextColor(WHITE);
-    display.setCursor(98, 57);
+    display.setCursor(103, 7);
     display.print(getLocalTimeStr());
 
-    drawWifiIcon(91, 58);
+    drawWifiIcon(94, 9);
   }
-  // Scene 2: Iris Out Closing Animation
-  else if (currentScene == 2)
-  {
-    display.drawBitmap(0, 0, main_scene_gui_bitmap, 128, 64, WHITE);
-    drawProgressBar(2, 28, 120, 1, 100);
-    drawAnimatedBean(1, 57);
+  //   // Scene 2: Iris Out Closing Animation
+  //   else if (currentScene == 2)
+  //   {
+  //     display.drawBitmap(0, 16, bottom_main_bitmap, 128, 48, WHITE);
+  //     drawProgressBar(2, 28, 120, 1, 100);
 
-    display.setTextSize(0);
-    display.setTextColor(BLACK);
-    display.setCursor(15, 5);
-    display.print(streamerName);
+  //     display.setTextSize(1);
+  //     display.setTextColor(BLACK);
+  //     display.setCursor(0, 0);
+  //     display.print(streamerName);
 
-    display.setCursor(6, 19);
-    display.setTextColor(WHITE);
-    display.print(streamerTitle.substring(0, 19));
+  //     display.setCursor(0, 8);
+  //     display.setTextColor(WHITE);
+  //     display.print(streamerTitle.substring(0, 15));
 
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.setCursor(98, 57);
-    display.print(getLocalTimeStr());
-    drawWifiIcon(91, 58);
+  //     display.setTextSize(1);
+  //     display.setTextColor(WHITE);
+  //     display.setCursor(103, 7);
+  //     display.print(getLocalTimeStr());
+  //     drawWifiIcon(94, 9);
 
-    display.fillCircle(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, closingCircleRadius, BLACK);
-    closingCircleRadius += 12;
+  //     display.fillCircle(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, closingCircleRadius, BLACK);
+  //     closingCircleRadius += 12;
 
-    if (closingCircleRadius >= 75)
-    {
-      display.clearDisplay();
-      display.display();
-      display.ssd1306_command(SSD1306_DISPLAYOFF);
-      state = 0;
-      testTimer = 0;
-      testTriggered = false;
-      return;
-    }
-  }
+  //     if (closingCircleRadius >= 75)
+  //     {
+  //       display.clearDisplay();
+  //       display.display();
+  //       display.ssd1306_command(SSD1306_DISPLAYOFF);
+  //       state = 0;
+  // #ifdef WOKWI_SIMULATOR
+  //       testTimer = 0;
+  //       testTriggered = false;
+  // #endif
+  //       return;
+  //     }
+  //   }
 
   display.display();
   delay(30);

@@ -12,7 +12,6 @@ extern const char *password;
 extern const char *ntpServer;
 extern const long gmtOffset_sec;
 extern const int daylightOffset_sec;
-extern const int beanAnimSpeed;
 extern const int scrollSpeed;
 extern const char *testStreamers[TEST_DATA_SIZE];
 extern const char *testTitles[TEST_DATA_SIZE];
