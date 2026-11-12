@@ -1,5 +1,6 @@
 #include "display_utils.h"
 #include <WiFi.h>
+#include <ctime>
 #include "config.h"
 
 void drawRetroProgressBar(int x, int y, int width, int height, int progress)
@@ -54,8 +55,9 @@ void drawWifiIcon(int x, int y)
 
 String getLocalTimeStr()
 {
+    const time_t now = time(nullptr);
     struct tm timeinfo;
-    if (!getLocalTime(&timeinfo))
+    if (now < 1483228800 || localtime_r(&now, &timeinfo) == nullptr)
         return "0000";
     char timeStringBuff[6];
     strftime(timeStringBuff, sizeof(timeStringBuff), "%H%M", &timeinfo);
