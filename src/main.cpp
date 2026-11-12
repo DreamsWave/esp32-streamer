@@ -1,14 +1,17 @@
 #include <WiFi.h>
-#include <WebServer.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <cstring>
+#include <ctime>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Fonts/TomThumb.h>
 
 #include "config.h"
 #include "display_utils.h"
+#include "certs/digicert_global_root_g2.h"
 
 #include "bitmaps/bottom_main.h"
 #include "bitmaps/glorp.h"
@@ -46,16 +49,25 @@ constexpr uint8_t STAR1_FRAME_COUNT = 2;
 constexpr uint8_t STAR2_FRAME_COUNT = 5;
 constexpr unsigned long WIFI_CONNECT_TIMEOUT = 20000;
 constexpr unsigned long WIFI_RETRY_INTERVAL = 10000;
+constexpr unsigned long MQTT_RETRY_INTERVAL = 5000;
+constexpr unsigned long NTP_SYNC_TIMEOUT = 15000;
 constexpr int MAIN_SCENE_DURATION_FRAMES = 200;
 constexpr uint8_t FADE_LEVEL_COUNT = 16;
+constexpr char MQTT_SERVER[] = "t421e1c9.ala.eu-central-1.emqxsl.com";
+constexpr uint16_t MQTT_PORT = 8883;
+constexpr char MQTT_TOPIC[] = "esp32/stream-trigger";
+constexpr uint32_t MIN_VALID_EPOCH = 1770000000;
+constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
 
-WebServer server(80);
+WiFiClientSecure secureClient;
+PubSubClient mqttClient(secureClient);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 GFXcanvas1 windowCanvas(WINDOW_CONTENT_WIDTH, WINDOW_CONTENT_HEIGHT);
 uint8_t endingFrame[SCREEN_WIDTH * SCREEN_HEIGHT / 8];
 uint8_t endingFadeLevel = 0;
 unsigned long wifiAttemptStartedAt = 0;
 unsigned long lastWifiRetryAt = 0;
+unsigned long lastMqttAttemptAt = 0;
 bool wifiConnecting = false;
 bool networkServicesStarted = false;
 
@@ -105,7 +117,9 @@ unsigned long lastScrollMillis = 0;
 unsigned long scrollDelayTimer = 0;
 int scrollPos = 0;
 
-void handleWebhook();
+void handleMqttMessage(char *topic, byte *payload, unsigned int length);
+void startStreamAnimation(const String &userName, const String &title);
+void connectMqtt();
 
 void applyDitherFade(uint8_t level, bool fadeIn)
 {
@@ -160,12 +174,24 @@ void startNetworkServices()
   display.display();
 
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+#ifndef WOKWI_SIMULATOR
+  const unsigned long syncStartedAt = millis();
+  while (time(nullptr) < MIN_VALID_EPOCH &&
+         millis() - syncStartedAt < NTP_SYNC_TIMEOUT)
+    delay(250);
 
-  server.on("/stream-trigger", HTTP_POST, handleWebhook);
-  server.begin();
+  if (time(nullptr) < MIN_VALID_EPOCH)
+    Serial.println(F("NTP time not synchronized yet; MQTT TLS will retry."));
+
+  secureClient.setCACert(DIGICERT_GLOBAL_ROOT_G2);
+  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+  mqttClient.setCallback(handleMqttMessage);
+  if (!mqttClient.setBufferSize(MQTT_BUFFER_SIZE))
+    Serial.println(F("Could not set MQTT packet buffer size."));
+#endif
   networkServicesStarted = true;
 
-  display.println(F("Server: OK! Port 80"));
+  display.println(F("MQTT: EMQX TLS"));
   display.println(F("Entering IDLE state..."));
   display.display();
 
@@ -379,20 +405,10 @@ void drawStarAnimations()
   }
 }
 
-void handleWebhook()
+void startStreamAnimation(const String &userName, const String &title)
 {
-  if (!server.hasArg("plain"))
-  {
-    server.send(400, "text/plain", "Body not found");
-    return;
-  }
-  JsonDocument doc;
-  deserializeJson(doc, server.arg("plain"));
-
-  if (doc["user_name"].is<const char *>())
-    streamerName = doc["user_name"].as<String>();
-  if (doc["title"].is<const char *>())
-    streamerTitle = doc["title"].as<String>();
+  streamerName = userName;
+  streamerTitle = title;
 
   loadingSceneProgress = 0;
   loadingFadeProgress = 0;
@@ -407,7 +423,55 @@ void handleWebhook()
   state = 1;
 
   display.ssd1306_command(SSD1306_DISPLAYON);
-  server.send(200, "text/plain", "glorpOS Activated");
+}
+
+void handleMqttMessage(char *topic, byte *payload, unsigned int length)
+{
+  if (strcmp(topic, MQTT_TOPIC) != 0)
+    return;
+
+  JsonDocument doc;
+  const DeserializationError error = deserializeJson(doc, payload, length);
+  if (error || !doc.is<JsonObject>() ||
+      !doc["user_name"].is<const char *>() ||
+      !doc["title"].is<const char *>())
+  {
+    Serial.println(F("Ignoring invalid stream-trigger MQTT message."));
+    return;
+  }
+
+  startStreamAnimation(doc["user_name"].as<String>(),
+                       doc["title"].as<String>());
+  Serial.printf("Stream trigger received for %s.\n", streamerName.c_str());
+}
+
+void connectMqtt()
+{
+#ifdef WOKWI_SIMULATOR
+  return;
+#else
+  const unsigned long now = millis();
+  if (mqttClient.connected() ||
+      now - lastMqttAttemptAt < MQTT_RETRY_INTERVAL)
+    return;
+  lastMqttAttemptAt = now;
+
+  const uint32_t chipId = static_cast<uint32_t>(ESP.getEfuseMac());
+  const String clientId =
+      String(F("ESP32-Streamer-")) + String(chipId, HEX);
+  Serial.print(F("Connecting to EMQX... "));
+
+  if (mqttClient.connect(clientId.c_str(), mqttUsername, mqttPassword))
+  {
+    Serial.println(F("connected"));
+    if (!mqttClient.subscribe(MQTT_TOPIC))
+      Serial.println(F("MQTT subscription failed."));
+  }
+  else
+  {
+    Serial.printf("failed, state=%d; retrying.\n", mqttClient.state());
+  }
+#endif
 }
 
 void setup()
@@ -481,7 +545,10 @@ void loop()
   if (!networkServicesStarted)
     startNetworkServices();
 
-  server.handleClient();
+#ifndef WOKWI_SIMULATOR
+  connectMqtt();
+  mqttClient.loop();
+#endif
 
 #ifdef WOKWI_SIMULATOR
   if (!testTriggered)

@@ -3,10 +3,20 @@
 #ifdef WOKWI_SIMULATOR
 const char *ssid = "Wokwi-GUEST";
 const char *password = "";
+const char *mqttUsername = "";
+const char *mqttPassword = "";
 #else
 #include "wifi_credentials.h"
+#ifndef MQTT_USERNAME
+#error "Define MQTT_USERNAME in include/wifi_credentials.h"
+#endif
+#ifndef MQTT_PASSWORD
+#error "Define MQTT_PASSWORD in include/wifi_credentials.h"
+#endif
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
+const char *mqttUsername = MQTT_USERNAME;
+const char *mqttPassword = MQTT_PASSWORD;
 #endif
 
 const char *ntpServer = "pool.ntp.org";
