@@ -14,6 +14,9 @@
 #include "bitmaps/glorp.h"
 #include "bitmaps/glorp_hover.h"
 #include "bitmaps/top_status.h"
+#include "bitmaps/rail_frames.h"
+#include "bitmaps/signal.h"
+#include "bitmaps/star-1.h"
 #include "bitmaps/window_glorp_signal.h"
 #include "bitmaps/window_moon.h"
 
@@ -28,6 +31,19 @@ constexpr int GLORP_HOVER_HEIGHT = 29;
 constexpr int GLORP_HOVER_END_Y_OFFSET = 5;
 constexpr unsigned long GLORP_HOVER_STEP_INTERVAL = 40;
 constexpr unsigned long GLORP_HOVER_DELAY = 5000;
+constexpr unsigned long RAIL_FRAME_INTERVAL = 200;
+constexpr unsigned long RAIL_REPEAT_DELAY = 2000;
+constexpr unsigned long SIGNAL_WAVE_STEP_INTERVAL = 150;
+constexpr int SIGNAL_X = 81;
+constexpr int SIGNAL_Y = 37;
+constexpr unsigned long STAR1_FRAME_INTERVAL_MIN = 1600;
+constexpr unsigned long STAR1_FRAME_INTERVAL_MAX = 2400;
+constexpr unsigned long STAR2_FRAME_INTERVAL_MIN = 425;
+constexpr unsigned long STAR2_FRAME_INTERVAL_MAX = 575;
+constexpr unsigned long STAR2_REPEAT_DELAY_MIN = 2700;
+constexpr unsigned long STAR2_REPEAT_DELAY_MAX = 3300;
+constexpr uint8_t STAR1_FRAME_COUNT = 2;
+constexpr uint8_t STAR2_FRAME_COUNT = 5;
 constexpr unsigned long WIFI_CONNECT_TIMEOUT = 20000;
 constexpr unsigned long WIFI_RETRY_INTERVAL = 10000;
 constexpr int MAIN_SCENE_DURATION_FRAMES = 200;
@@ -55,6 +71,29 @@ bool glorpHoverDelayStarted = false;
 bool glorpHoverStarted = false;
 bool glorpHoverFinished = false;
 
+uint8_t railAnimationFrame = 0;
+unsigned long lastRailFrameAt = 0;
+bool railAnimationPaused = false;
+uint8_t signalAnimationStage = 0;
+unsigned long lastSignalWaveStepAt = 0;
+struct StarAnimationState
+{
+  int16_t x;
+  int16_t y;
+  uint8_t frame;
+  unsigned long lastFrameAt;
+  unsigned long frameInterval;
+  unsigned long repeatDelay;
+  bool paused;
+};
+
+StarAnimationState star1Animations[] = {
+    {69, 30, 0, 0, 0, 0, false},
+    {52, 43, 0, 0, 0, 0, false},
+    {3, 45, 0, 0, 0, 0, false}};
+StarAnimationState star2Animations[] = {
+    {51, 26, 0, 0, 0, 0, false},
+    {97, 22, 0, 0, 0, 0, false}};
 String streamerName = "STREAMER";
 String streamerTitle = "Cool title";
 
@@ -146,6 +185,38 @@ void resetGlorpHoverAnimation()
   glorpHoverFinished = false;
 }
 
+void resetRailAnimation()
+{
+  railAnimationFrame = 0;
+  lastRailFrameAt = millis();
+  railAnimationPaused = false;
+  signalAnimationStage = 0;
+  lastSignalWaveStepAt = lastRailFrameAt;
+}
+
+void resetStarAnimations()
+{
+  const unsigned long now = millis();
+  for (StarAnimationState &star : star1Animations)
+  {
+    star.frame = 0;
+    star.frameInterval = random(STAR1_FRAME_INTERVAL_MIN,
+                                STAR1_FRAME_INTERVAL_MAX + 1);
+    star.lastFrameAt = now - random(0, star.frameInterval);
+    star.paused = false;
+  }
+
+  for (StarAnimationState &star : star2Animations)
+  {
+    star.frame = 0;
+    star.frameInterval = random(STAR2_FRAME_INTERVAL_MIN,
+                                STAR2_FRAME_INTERVAL_MAX + 1);
+    star.lastFrameAt = now - random(0, star.frameInterval);
+    star.repeatDelay = STAR2_REPEAT_DELAY_MIN;
+    star.paused = false;
+  }
+}
+
 void drawGlorpHoverAnimation()
 {
   unsigned long now = millis();
@@ -192,6 +263,122 @@ void drawGlorpHoverAnimation()
   display.drawFastVLine(WINDOW_X + 39, WINDOW_Y + 4, WINDOW_CONTENT_HEIGHT, WHITE);
 }
 
+void drawRailAnimation()
+{
+  const unsigned long now = millis();
+  if (railAnimationPaused)
+  {
+    if (now - lastRailFrameAt >= RAIL_REPEAT_DELAY)
+    {
+      railAnimationPaused = false;
+      lastRailFrameAt = now;
+    }
+  }
+  else if (now - lastRailFrameAt >= RAIL_FRAME_INTERVAL)
+  {
+    if (railAnimationFrame == RAIL_FRAME_COUNT - 1)
+    {
+      railAnimationFrame = 0;
+      railAnimationPaused = true;
+    }
+    else
+    {
+      railAnimationFrame++;
+    }
+    lastRailFrameAt = now;
+  }
+
+  const uint8_t firstPixel = pgm_read_byte(&railFrameOffsets[railAnimationFrame]);
+  const uint8_t endPixel = pgm_read_byte(&railFrameOffsets[railAnimationFrame + 1]);
+  for (uint8_t i = firstPixel; i < endPixel; i++)
+  {
+    const uint8_t x = pgm_read_byte(&railPixelCoordinates[i * 2]);
+    const uint8_t y = pgm_read_byte(&railPixelCoordinates[i * 2 + 1]);
+    display.drawPixel(x, y, WHITE);
+  }
+}
+
+void drawSignalAnimation()
+{
+  const unsigned long now = millis();
+  if (now - lastSignalWaveStepAt >= SIGNAL_WAVE_STEP_INTERVAL)
+  {
+    signalAnimationStage = (signalAnimationStage + 1) % 5;
+    lastSignalWaveStepAt = now;
+  }
+
+  for (int y = 0; y < 9; y++)
+  {
+    for (int x = 0; x < 9; x++)
+    {
+      const uint8_t rowByte = pgm_read_byte(&signal_bitmap_[y * 2 + x / 8]);
+      if ((rowByte & (0x80 >> (x & 7))) == 0)
+        continue;
+
+      const int wave = x + y;
+      const bool visible = signalAnimationStage == 1
+                               ? wave >= 11
+                           : signalAnimationStage == 2
+                               ? wave >= 8
+                               : signalAnimationStage >= 3 && wave >= 5;
+      if (visible)
+        display.drawPixel(SIGNAL_X + x, SIGNAL_Y + y, WHITE);
+    }
+  }
+}
+
+void drawStarAnimations()
+{
+  const unsigned long now = millis();
+  for (StarAnimationState &star : star1Animations)
+  {
+    if (now - star.lastFrameAt >= star.frameInterval)
+    {
+      star.frame = (star.frame + 1) % STAR1_FRAME_COUNT;
+      star.lastFrameAt = now;
+      star.frameInterval = random(STAR1_FRAME_INTERVAL_MIN,
+                                  STAR1_FRAME_INTERVAL_MAX + 1);
+    }
+
+    display.drawBitmap(star.x, star.y, star1_bitmap + star.frame * 3,
+                       3, 3, WHITE);
+  }
+
+  for (StarAnimationState &star : star2Animations)
+  {
+    if (star.paused)
+    {
+      if (now - star.lastFrameAt >= star.repeatDelay)
+      {
+        star.frame = 0;
+        star.paused = false;
+        star.lastFrameAt = now;
+        star.frameInterval = random(STAR2_FRAME_INTERVAL_MIN,
+                                    STAR2_FRAME_INTERVAL_MAX + 1);
+      }
+    }
+    else if (now - star.lastFrameAt >= star.frameInterval)
+    {
+      star.frame++;
+      star.lastFrameAt = now;
+      if (star.frame == STAR2_FRAME_COUNT - 1)
+      {
+        star.paused = true;
+        star.repeatDelay = random(STAR2_REPEAT_DELAY_MIN,
+                                  STAR2_REPEAT_DELAY_MAX + 1);
+      }
+      else
+      {
+        star.frameInterval = random(STAR2_FRAME_INTERVAL_MIN,
+                                    STAR2_FRAME_INTERVAL_MAX + 1);
+      }
+    }
+
+    display.drawBitmap(star.x, star.y, star2_bitmap + star.frame * 5,
+                       5, 5, WHITE);
+  }
+}
+
 void handleWebhook()
 {
   if (!server.hasArg("plain"))
@@ -215,6 +402,8 @@ void handleWebhook()
   scrollPos = 0;
   scrollDelayTimer = 0;
   resetGlorpHoverAnimation();
+  resetRailAnimation();
+  resetStarAnimations();
   state = 1;
 
   display.ssd1306_command(SSD1306_DISPLAYON);
@@ -317,6 +506,8 @@ void loop()
       scrollPos = 0;
       scrollDelayTimer = 0;
       resetGlorpHoverAnimation();
+      resetRailAnimation();
+      resetStarAnimations();
       state = 1;
 
       display.ssd1306_command(SSD1306_DISPLAYON);
@@ -391,6 +582,9 @@ void loop()
     display.drawBitmap(WINDOW_X, WINDOW_Y, window_moon_bitmap, 41, 41, WHITE);
     drawGlorpHoverAnimation();
     display.drawBitmap(78, 32, window_glorp_signal_bitmap, 48, 30, WHITE);
+    drawRailAnimation();
+    drawSignalAnimation();
+    drawStarAnimations();
 
     if (mainSceneProgress < MAIN_SCENE_DURATION_FRAMES)
       mainSceneProgress++;
