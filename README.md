@@ -16,6 +16,17 @@ Connect the OLED to the ESP32:
 | SDA | GPIO 21 |
 | SCL | GPIO 22 |
 
+Connect a common-anode RGB LED using a separate 220 Ω resistor on each color channel:
+
+| RGB LED | Resistor | ESP32 |
+| --- | --- | --- |
+| Red (R) | 220 Ω | GPIO 19 |
+| Green (G) | 220 Ω | GPIO 18 |
+| Blue (B) | 220 Ω | GPIO 5 |
+| Common anode | — | 3V3 |
+
+The physical RGB LED smoothly fades in, cycles through blue, light blue, purple, and pink while a stream alert animation is playing, then fades out when the screen's ending fade begins. Wokwi uses slower, digital color updates instead of PWM to keep the simulation responsive; brightness fades are only shown on the physical LED.
+
 The Wokwi wiring is defined in [diagram.json](./diagram.json).
 
 ## Set up the project

@@ -4,12 +4,23 @@
   "editor": "wokwi",
   "parts": [
     { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
-    { "type": "board-ssd1306", "id": "oled", "top": 50, "left": 150, "attrs": {} }
+    { "type": "board-ssd1306", "id": "oled", "top": 50, "left": 150, "attrs": {} },
+    { "type": "wokwi-rgb-led", "id": "rgb", "top": -85, "left": 210, "attrs": { "common": "anode" } },
+    { "type": "wokwi-resistor", "id": "r_red", "top": -70, "left": 130, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "r_green", "top": -40, "left": 130, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "r_blue", "top": -10, "left": 130, "attrs": { "value": "220" } }
   ],
   "connections": [
     [ "esp:GND.1", "oled:GND", "black", [ "v0" ] ],
     [ "esp:3V3", "oled:VCC", "red", [ "v0" ] ],
     [ "esp:21", "oled:SDA", "blue", [ "v0" ] ],
-    [ "esp:22", "oled:SCL", "yellow", [ "v0" ] ]
+    [ "esp:22", "oled:SCL", "yellow", [ "v0" ] ],
+    [ "esp:19", "r_red:1", "green", [ "h0" ] ],
+    [ "r_red:2", "rgb:R", "green", [ "h0" ] ],
+    [ "esp:18", "r_green:1", "green", [ "h0" ] ],
+    [ "r_green:2", "rgb:G", "green", [ "h0" ] ],
+    [ "esp:5", "r_blue:1", "green", [ "h0" ] ],
+    [ "r_blue:2", "rgb:B", "green", [ "h0" ] ],
+    [ "esp:3V3", "rgb:COM", "red", [ "h0" ] ]
   ]
 }

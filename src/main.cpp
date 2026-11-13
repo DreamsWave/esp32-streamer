@@ -51,6 +51,26 @@ constexpr unsigned long WIFI_CONNECT_TIMEOUT = 20000;
 constexpr unsigned long WIFI_RETRY_INTERVAL = 10000;
 constexpr unsigned long MQTT_RETRY_INTERVAL = 5000;
 constexpr unsigned long NTP_SYNC_TIMEOUT = 15000;
+constexpr uint8_t RGB_RED_PIN = 19;
+constexpr uint8_t RGB_GREEN_PIN = 18;
+constexpr uint8_t RGB_BLUE_PIN = 5;
+#ifdef WOKWI_SIMULATOR
+constexpr unsigned long LED_COLOR_STEP_INTERVAL = 200;
+constexpr unsigned long LED_BRIGHTNESS_UPDATE_INTERVAL = 200;
+constexpr uint8_t LED_COLOR_STEP_SIZE = 8;
+#else
+constexpr unsigned long LED_COLOR_STEP_INTERVAL = 35;
+constexpr unsigned long LED_BRIGHTNESS_UPDATE_INTERVAL = 20;
+constexpr uint8_t LED_COLOR_STEP_SIZE = 1;
+#endif
+constexpr unsigned long LED_FADE_IN_DURATION = 6000;
+constexpr unsigned long LED_FADE_OUT_DURATION = 1000;
+constexpr uint8_t LED_COLOR_PALETTE[][3] = {
+    {35, 60, 255},
+    {80, 175, 255},
+    {125, 40, 255},
+    {255, 50, 180},
+    {125, 40, 255}};
 constexpr int MAIN_SCENE_DURATION_FRAMES = 200;
 constexpr uint8_t FADE_LEVEL_COUNT = 16;
 constexpr char MQTT_SERVER[] = "t421e1c9.ala.eu-central-1.emqxsl.com";
@@ -72,6 +92,15 @@ unsigned long lastWifiRetryAt = 0;
 unsigned long lastMqttAttemptAt = 0;
 bool wifiConnecting = false;
 bool networkServicesStarted = false;
+bool ledColorCycleActive = false;
+bool ledFadingOut = false;
+uint8_t ledColorPhase = 0;
+uint8_t ledBrightness = 0;
+uint8_t ledFadeOutBrightness = 0;
+unsigned long lastLedColorStepAt = 0;
+unsigned long lastLedBrightnessUpdateAt = 0;
+unsigned long ledColorCycleStartedAt = 0;
+unsigned long ledFadeOutStartedAt = 0;
 
 int state = 0;
 int currentScene = 0;
@@ -118,6 +147,103 @@ bool testTriggered = false;
 unsigned long lastScrollMillis = 0;
 unsigned long scrollDelayTimer = 0;
 int scrollPos = 0;
+
+uint8_t interpolateLedColor(uint8_t start, uint8_t end, uint16_t blend)
+{
+  return start + (static_cast<int16_t>(end) - start) * blend / 255;
+}
+
+void setLedColor(uint8_t phase, uint8_t brightness)
+{
+  constexpr size_t PALETTE_SIZE =
+      sizeof(LED_COLOR_PALETTE) / sizeof(LED_COLOR_PALETTE[0]);
+  const uint16_t scaledPhase = static_cast<uint16_t>(phase) * PALETTE_SIZE;
+  const size_t segment = scaledPhase >> 8;
+  const size_t nextSegment = (segment + 1) % PALETTE_SIZE;
+  const uint16_t blend = scaledPhase & 0xFF;
+  const uint8_t red = interpolateLedColor(
+      LED_COLOR_PALETTE[segment][0], LED_COLOR_PALETTE[nextSegment][0], blend);
+  const uint8_t green = interpolateLedColor(
+      LED_COLOR_PALETTE[segment][1], LED_COLOR_PALETTE[nextSegment][1], blend);
+  const uint8_t blue = interpolateLedColor(
+      LED_COLOR_PALETTE[segment][2], LED_COLOR_PALETTE[nextSegment][2], blend);
+
+#ifdef WOKWI_SIMULATOR
+  const bool showColor = ledColorCycleActive || brightness > 0;
+  digitalWrite(RGB_RED_PIN, showColor && red >= 96 ? LOW : HIGH);
+  digitalWrite(RGB_GREEN_PIN, showColor && green >= 96 ? LOW : HIGH);
+  digitalWrite(RGB_BLUE_PIN, showColor && blue >= 96 ? LOW : HIGH);
+#else
+  analogWrite(RGB_RED_PIN, 255 - static_cast<uint8_t>(red * brightness / 255));
+  analogWrite(RGB_GREEN_PIN,
+              255 - static_cast<uint8_t>(green * brightness / 255));
+  analogWrite(RGB_BLUE_PIN,
+              255 - static_cast<uint8_t>(blue * brightness / 255));
+#endif
+}
+
+void updateLedColorCycle()
+{
+  if (!ledColorCycleActive && !ledFadingOut)
+    return;
+
+  const unsigned long now = millis();
+  if (now - lastLedBrightnessUpdateAt < LED_BRIGHTNESS_UPDATE_INTERVAL)
+    return;
+
+  lastLedBrightnessUpdateAt = now;
+
+  if (ledColorCycleActive)
+  {
+    if (now - lastLedColorStepAt >= LED_COLOR_STEP_INTERVAL)
+    {
+      lastLedColorStepAt = now;
+      ledColorPhase += LED_COLOR_STEP_SIZE;
+    }
+
+    const unsigned long linearBrightness = min(
+        static_cast<unsigned long>(now - ledColorCycleStartedAt) * 255 /
+            LED_FADE_IN_DURATION,
+        255UL);
+    ledBrightness = static_cast<uint8_t>(
+        linearBrightness * linearBrightness / 255);
+  }
+  else
+  {
+    const unsigned long fadeElapsed = now - ledFadeOutStartedAt;
+    if (fadeElapsed >= LED_FADE_OUT_DURATION)
+    {
+      ledBrightness = 0;
+      ledFadingOut = false;
+    }
+    else
+    {
+      ledBrightness = static_cast<uint8_t>(
+          static_cast<unsigned long>(ledFadeOutBrightness) *
+          (LED_FADE_OUT_DURATION - fadeElapsed) / LED_FADE_OUT_DURATION);
+    }
+  }
+
+  setLedColor(ledColorPhase, ledBrightness);
+}
+
+void stopLedColorCycle()
+{
+  if (!ledColorCycleActive)
+  {
+    if (!ledFadingOut)
+    {
+      ledBrightness = 0;
+      setLedColor(ledColorPhase, ledBrightness);
+    }
+    return;
+  }
+
+  ledColorCycleActive = false;
+  ledFadingOut = true;
+  ledFadeOutBrightness = ledBrightness;
+  ledFadeOutStartedAt = millis();
+}
 
 size_t utf8ByteOffset(const String &text, size_t characterIndex)
 {
@@ -445,6 +571,15 @@ void startStreamAnimation(const String &userName, const String &title)
 {
   streamerName = userName;
   streamerTitle = title;
+  ledColorPhase = 0;
+  lastLedColorStepAt = millis();
+  lastLedBrightnessUpdateAt = millis();
+  ledColorCycleStartedAt = millis();
+  ledBrightness = 0;
+  ledFadeOutBrightness = 0;
+  ledColorCycleActive = true;
+  ledFadingOut = false;
+  setLedColor(ledColorPhase, ledBrightness);
 
   loadingSceneProgress = 0;
   loadingFadeProgress = 0;
@@ -514,6 +649,10 @@ void setup()
 {
   Serial.begin(115200);
   randomSeed(analogRead(0));
+  pinMode(RGB_RED_PIN, OUTPUT);
+  pinMode(RGB_GREEN_PIN, OUTPUT);
+  pinMode(RGB_BLUE_PIN, OUTPUT);
+  stopLedColorCycle();
 
   display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
   display.ssd1306_command(SSD1306_DISPLAYON);
@@ -559,6 +698,8 @@ void setup()
 
 void loop()
 {
+  updateLedColorCycle();
+
   if (WiFi.status() != WL_CONNECTED)
   {
     unsigned long now = millis();
@@ -602,22 +743,8 @@ void loop()
       int randomStreamerIndex = random(0, TEST_DATA_SIZE);
       int randomTitleIndex = random(0, TEST_DATA_SIZE);
 
-      streamerName = String(testStreamers[randomStreamerIndex]);
-      streamerTitle = String(testTitles[randomTitleIndex]);
-
-      loadingSceneProgress = 0;
-      loadingFadeProgress = 0;
-      mainSceneProgress = 0;
-      endingFadeLevel = 0;
-      currentScene = 0;
-      scrollPos = 0;
-      scrollDelayTimer = 0;
-      resetGlorpHoverAnimation();
-      resetRailAnimation();
-      resetStarAnimations();
-      state = 1;
-
-      display.ssd1306_command(SSD1306_DISPLAYON);
+      startStreamAnimation(String(testStreamers[randomStreamerIndex]),
+                           String(testTitles[randomTitleIndex]));
       Serial.print(F("Wokwi Trigger: Simulated alert for @"));
       Serial.println(streamerName);
     }
@@ -761,6 +888,7 @@ void loop()
   {
     memcpy(endingFrame, display.getBuffer(), sizeof(endingFrame));
     endingFadeLevel = 0;
+    stopLedColorCycle();
     currentScene = 2;
   }
 }
