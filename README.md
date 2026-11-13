@@ -60,8 +60,10 @@ Start the simulation from VS Code with the Wokwi extension. It uses `wokwi.toml`
 The ESP32 subscribes to the `esp32/stream-trigger` topic. Publish a JSON message with both `user_name` and `title` string fields:
 
 ```json
-{"user_name":"LocalTest","title":"Testing from my PC"}
+{"user_name":"LocalTest","title":"Тестовый заголовок стрима"}
 ```
+
+Russian titles are displayed with Cyrillic glyphs and scroll without breaking UTF-8 characters.
 
 ### With MQTTX
 

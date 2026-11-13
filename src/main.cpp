@@ -7,7 +7,7 @@
 #include <ctime>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Fonts/TomThumb.h>
+#include <U8g2_for_Adafruit_GFX.h>
 
 #include "config.h"
 #include "display_utils.h"
@@ -58,10 +58,12 @@ constexpr uint16_t MQTT_PORT = 8883;
 constexpr char MQTT_TOPIC[] = "esp32/stream-trigger";
 constexpr uint32_t MIN_VALID_EPOCH = 1770000000;
 constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
+constexpr size_t MAX_VISIBLE_TITLE_CHARS = 20;
 
 WiFiClientSecure secureClient;
 PubSubClient mqttClient(secureClient);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+U8G2_FOR_ADAFRUIT_GFX titleFont;
 GFXcanvas1 windowCanvas(WINDOW_CONTENT_WIDTH, WINDOW_CONTENT_HEIGHT);
 uint8_t endingFrame[SCREEN_WIDTH * SCREEN_HEIGHT / 8];
 uint8_t endingFadeLevel = 0;
@@ -116,6 +118,40 @@ bool testTriggered = false;
 unsigned long lastScrollMillis = 0;
 unsigned long scrollDelayTimer = 0;
 int scrollPos = 0;
+
+size_t utf8ByteOffset(const String &text, size_t characterIndex)
+{
+  size_t currentCharacter = 0;
+  for (size_t byteIndex = 0; byteIndex < text.length(); byteIndex++)
+  {
+    if ((static_cast<uint8_t>(text[byteIndex]) & 0xC0) != 0x80)
+    {
+      if (currentCharacter == characterIndex)
+        return byteIndex;
+      currentCharacter++;
+    }
+  }
+  return text.length();
+}
+
+size_t utf8CharacterCount(const String &text)
+{
+  size_t count = 0;
+  for (size_t byteIndex = 0; byteIndex < text.length(); byteIndex++)
+  {
+    if ((static_cast<uint8_t>(text[byteIndex]) & 0xC0) != 0x80)
+      count++;
+  }
+  return count;
+}
+
+String utf8Substring(const String &text, size_t startCharacter,
+                     size_t characterCount)
+{
+  const size_t startByte = utf8ByteOffset(text, startCharacter);
+  const size_t endByte = utf8ByteOffset(text, startCharacter + characterCount);
+  return text.substring(startByte, endByte);
+}
 
 void handleMqttMessage(char *topic, byte *payload, unsigned int length);
 void startStreamAnimation(const String &userName, const String &title);
@@ -481,6 +517,10 @@ void setup()
 
   display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
   display.ssd1306_command(SSD1306_DISPLAYON);
+  titleFont.begin(display);
+  titleFont.setFontMode(1);
+  titleFont.setForegroundColor(WHITE);
+  titleFont.setFont(u8g2_font_5x8_t_cyrillic);
 
   display.clearDisplay();
   display.setTextSize(1);
@@ -668,39 +708,41 @@ void loop()
       scrollDelayTimer = millis();
 
     String displayText = streamerTitle;
-    int maxVisibleChars = 24;
+    const size_t titleCharacterCount = utf8CharacterCount(displayText);
 
-    if (displayText.length() > maxVisibleChars)
+    if (titleCharacterCount > MAX_VISIBLE_TITLE_CHARS)
     {
       String paddedText = streamerTitle + "   ***   ";
+      const size_t paddedCharacterCount = utf8CharacterCount(paddedText);
 
       if (millis() - scrollDelayTimer > 2000)
       {
         if (millis() - lastScrollMillis > scrollSpeed)
         {
           scrollPos++;
-          if (scrollPos >= paddedText.length())
+          if (static_cast<size_t>(scrollPos) >= paddedCharacterCount)
             scrollPos = 0;
           lastScrollMillis = millis();
         }
-        displayText = paddedText.substring(scrollPos, scrollPos + maxVisibleChars);
+        displayText = utf8Substring(paddedText, scrollPos,
+                                    MAX_VISIBLE_TITLE_CHARS);
       }
       else
       {
-        displayText = paddedText.substring(0, maxVisibleChars);
+        displayText = utf8Substring(paddedText, 0,
+                                    MAX_VISIBLE_TITLE_CHARS);
       }
 
-      if (displayText.length() < maxVisibleChars)
+      const size_t visibleCharacterCount = utf8CharacterCount(displayText);
+      if (visibleCharacterCount < MAX_VISIBLE_TITLE_CHARS)
       {
-        int remaining = maxVisibleChars - displayText.length();
-        displayText += paddedText.substring(0, remaining);
+        const size_t remaining = MAX_VISIBLE_TITLE_CHARS - visibleCharacterCount;
+        displayText += utf8Substring(paddedText, 0, remaining);
       }
     }
 
-    display.setFont(&TomThumb);
-    display.setCursor(0, 15);
-    display.setTextColor(WHITE);
-    display.print(displayText);
+    titleFont.setCursor(0, 15);
+    titleFont.print(displayText);
 
     display.setFont(nullptr);
     display.setTextSize(1);
